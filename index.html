@@ -62,14 +62,14 @@
 
   <div id="video-container">
     <video id="camera" autoplay playsinline muted class="mirrored"></video>
-    <button id="toggle-btn">Mirror: ON</button>
+    <button id="toggle-btn">Mirror: OFF</button>
   </div>
 
   <script>
     const video = document.getElementById('camera');
     const toggleBtn = document.getElementById('toggle-btn');
 
-    let mirrored = true;
+    let mirrored = false;
 
     navigator.mediaDevices.getUserMedia({
       video: { facingMode: "user" },
