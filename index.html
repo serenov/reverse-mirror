@@ -69,7 +69,16 @@
     const video = document.getElementById('camera');
     const toggleBtn = document.getElementById('toggle-btn');
 
+    
+
     let mirrored = true;
+
+    function flipTheImage() {
+      video.classList.toggle('mirrored', mirrored);
+      toggleBtn.textContent = `Mirror: ${mirrored ? "ON" : "OFF"}`;
+    }
+
+    flipTheImage();
 
     navigator.mediaDevices.getUserMedia({
       video: { facingMode: "user" },
@@ -85,8 +94,7 @@
 
     toggleBtn.addEventListener('click', () => {
       mirrored = !mirrored;
-      video.classList.toggle('mirrored', mirrored);
-      toggleBtn.textContent = `Mirror: ${mirrored ? "ON" : "OFF"}`;
+      flipTheImage()
     });
   </script>
 
