@@ -1,100 +1,293 @@
-<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#000000">
   <title>Reverse Mirror</title>
-
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    html, body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: black;
-      font-family: sans-serif;
-    }
-
-    #video-container {
-      width: 100dvw;
-      height: 100dvh;
-      position: relative;
-    }
-
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transition: transform 0.2s ease;
-    }
-
-    .mirrored {
-      transform: scaleX(-1);
-    }
-
-    #toggle-btn {
-      position: absolute;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 12px 20px;
-      background: rgba(0, 0, 0, 0.6);
-      color: white;
-      border: none;
-      border-radius: 30px;
-      font-size: 16px;
-      cursor: pointer;
-      z-index: 10;
-    }
-
-    #toggle-btn:active {
-      transform: translateX(-50%) scale(0.95);
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: black; color: white; font-family: sans-serif; }
+    [hidden] { display: none !important; }
+    #video-container { width: 100%; height: 100vh; height: 100dvh; position: relative; }
+    #camera { width: 100%; height: 100%; object-fit: cover; }
+    .mirrored { transform: scaleX(-1); }
+    .status-bar { position: absolute; top: max(20px, env(safe-area-inset-top)); left: 16px; right: 16px; display: flex; align-items: flex-start; justify-content: center; gap: 12px; pointer-events: none; }
+    #status, #recording-indicator { padding: 10px 14px; border-radius: 16px; background: rgba(0, 0, 0, 0.75); font-size: 14px; line-height: 1.4; text-align: center; }
+    #recording-indicator { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .record-dot { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: #ff5454; }
+    .controls { position: absolute; bottom: max(20px, env(safe-area-inset-bottom)); left: 12px; right: 12px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+    button, .download { padding: 12px 18px; min-height: 44px; background: rgba(0, 0, 0, 0.75); color: white; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 30px; font: inherit; font-size: 15px; cursor: pointer; text-decoration: none; text-align: center; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:active:not(:disabled) { transform: scale(0.95); }
+    button:focus-visible, .download:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
+    #photo-btn, .download { background: #fff; color: #111; }
+    #record-btn { background: #a91f32; }
+    #record-btn.recording { background: #dc263f; }
+    dialog { margin: auto; width: min(92vw, 640px); max-height: 90vh; max-height: 90dvh; padding: 20px; overflow: auto; border: 1px solid #444; border-radius: 20px; background: #151515; color: white; }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.8); }
+    dialog h2 { font-size: 20px; margin-bottom: 14px; }
+    #photo-preview, #video-preview { display: block; width: 100%; max-height: 60vh; object-fit: contain; border-radius: 10px; background: black; }
+    .preview-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+    @media (max-width: 360px) { .controls { gap: 6px; } .controls button { padding: 12px 10px; font-size: 14px; } }
   </style>
 </head>
-
 <body>
-
-  <div id="video-container">
+  <main id="video-container" aria-label="Camera mirror">
     <video id="camera" autoplay playsinline muted></video>
-    <button id="toggle-btn">Mirror: OFF</button>
-  </div>
-
+    <div class="status-bar">
+      <p id="status" role="status" aria-live="polite">Starting camera…</p>
+      <p id="recording-indicator" hidden><span class="record-dot" aria-hidden="true"></span>REC <span id="timer">00:00</span></p>
+    </div>
+    <div class="controls" aria-label="Camera controls">
+      <button id="toggle-btn" type="button" aria-pressed="false">Mirror: OFF</button>
+      <button id="photo-btn" type="button" disabled>Capture photo</button>
+      <button id="record-btn" type="button" disabled>Record video</button>
+    </div>
+  </main>
+  <dialog id="preview" aria-labelledby="preview-title">
+    <h2 id="preview-title">Your capture</h2>
+    <img id="photo-preview" alt="Captured photo" hidden>
+    <video id="video-preview" controls playsinline hidden></video>
+    <div class="preview-actions">
+      <button id="close-preview" type="button">Close</button>
+      <a id="download" class="download">Download</a>
+    </div>
+  </dialog>
   <script>
     const video = document.getElementById('camera');
     const toggleBtn = document.getElementById('toggle-btn');
-
+    const photoBtn = document.getElementById('photo-btn');
+    const recordBtn = document.getElementById('record-btn');
+    const status = document.getElementById('status');
+    const indicator = document.getElementById('recording-indicator');
+    const timer = document.getElementById('timer');
+    const preview = document.getElementById('preview');
+    const photoPreview = document.getElementById('photo-preview');
+    const videoPreview = document.getElementById('video-preview');
+    const download = document.getElementById('download');
+    const canRecord = typeof MediaRecorder !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function';
     let mirrored = false;
+    let cameraStream = null;
+    let cameraReady = false;
+    let takingPhoto = false;
+    let recording = null;
+    let captureUrl = null;
+    let leaving = false;
+    let generation = 0;
 
-    function flipTheImage() {
-      video.classList.toggle('mirrored', mirrored);
-      toggleBtn.textContent = `Mirror: ${mirrored ? "ON" : "OFF"}`;
+    function setStatus(message) { status.textContent = message; }
+
+    function updateControls() {
+      toggleBtn.disabled = takingPhoto || !!recording;
+      photoBtn.disabled = !cameraReady || takingPhoto || !!recording;
+      recordBtn.disabled = !cameraReady || !canRecord || takingPhoto || !!recording?.stopping;
+      recordBtn.textContent = recording ? (recording.stopping ? 'Saving…' : 'Stop recording') : 'Record video';
+      recordBtn.classList.toggle('recording', !!recording);
+      indicator.hidden = !recording;
     }
 
-    flipTheImage();
+    function drawFrame(canvas, context, mirror) {
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      if (mirror) { context.translate(canvas.width, 0); context.scale(-1, 1); }
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      context.setTransform(1, 0, 0, 1, 0, 0);
+    }
 
-    navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user" },
-      audio: false
-    })
-    .then(stream => {
-      video.srcObject = stream;
-    })
-    .catch(err => {
-      alert("Camera access denied");
-      console.error(err);
-    });
+    function createCanvas() {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      if (!canvas.width || !canvas.height) throw new Error('Camera is not ready.');
+      return canvas;
+    }
+
+    function clearPreview() {
+      videoPreview.pause();
+      videoPreview.removeAttribute('src');
+      videoPreview.load();
+      photoPreview.removeAttribute('src');
+      download.removeAttribute('href');
+      if (captureUrl) URL.revokeObjectURL(captureUrl);
+      captureUrl = null;
+    }
+
+    function showCapture(blob, kind) {
+      clearPreview();
+      captureUrl = URL.createObjectURL(blob);
+      const extension = kind === 'photo' ? 'png' : (blob.type.includes('mp4') ? 'mp4' : 'webm');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      download.href = captureUrl;
+      download.download = `reverse-mirror-${kind}-${timestamp}.${extension}`;
+      download.textContent = `Download ${kind}`;
+      document.getElementById('preview-title').textContent = kind === 'photo' ? 'Your photo' : 'Your video (no audio)';
+      photoPreview.hidden = kind !== 'photo';
+      videoPreview.hidden = kind !== 'video';
+      (kind === 'photo' ? photoPreview : videoPreview).src = captureUrl;
+      preview.showModal();
+      setStatus(`${kind === 'photo' ? 'Photo' : 'Video'} ready to download.`);
+    }
 
     toggleBtn.addEventListener('click', () => {
       mirrored = !mirrored;
-      flipTheImage()
+      video.classList.toggle('mirrored', mirrored);
+      toggleBtn.textContent = `Mirror: ${mirrored ? 'ON' : 'OFF'}`;
+      toggleBtn.setAttribute('aria-pressed', String(mirrored));
     });
-  </script>
 
+    photoBtn.addEventListener('click', async () => {
+      if (!cameraReady || takingPhoto || recording) return;
+      takingPhoto = true;
+      const captureGeneration = generation;
+      updateControls();
+      try {
+        const canvas = createCanvas();
+        drawFrame(canvas, canvas.getContext('2d'), mirrored);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) throw new Error('Photo encoding failed.');
+        if (!leaving && captureGeneration === generation) showCapture(blob, 'photo');
+      } catch (error) {
+        setStatus('Could not capture a photo. Please try again.');
+        console.error(error);
+      } finally {
+        takingPhoto = false;
+        updateControls();
+      }
+    });
+
+    function cleanupRecording(session) {
+      cancelAnimationFrame(session.frame);
+      clearInterval(session.clock);
+      session.stream.getTracks().forEach(track => track.stop());
+    }
+
+    function stopRecording() {
+      if (!recording || recording.stopping) return;
+      recording.stopping = true;
+      if (recording.recorder.state !== 'inactive') recording.recorder.stop();
+      updateControls();
+    }
+
+    recordBtn.addEventListener('click', () => {
+      if (recording) { stopRecording(); return; }
+      if (!cameraReady || !canRecord || takingPhoto) return;
+      let stream;
+      let session;
+      try {
+        const canvas = createCanvas();
+        const context = canvas.getContext('2d');
+        const mirror = mirrored;
+        drawFrame(canvas, context, mirror);
+        stream = canvas.captureStream(30);
+        const mimeType = ['video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(type => MediaRecorder.isTypeSupported(type));
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        session = { recorder, stream, chunks: [], frame: null, clock: null, stopping: false, failed: false, discarded: false };
+        recorder.ondataavailable = event => { if (event.data.size) session.chunks.push(event.data); };
+        recorder.onerror = event => {
+          session.failed = true;
+          setStatus('Video recording failed. Please try again.');
+          console.error(event.error);
+          stopRecording();
+        };
+        recorder.onstop = () => {
+          cleanupRecording(session);
+          if (recording === session) recording = null;
+          updateControls();
+          if (leaving || session.failed || session.discarded) return;
+          const blob = new Blob(session.chunks, { type: recorder.mimeType || session.chunks[0]?.type || 'video/webm' });
+          if (blob.size) showCapture(blob, 'video');
+          else setStatus('No video was captured. Please try recording for longer.');
+        };
+        recorder.start(1000);
+        recording = session;
+        const started = performance.now();
+        timer.textContent = '00:00';
+        session.clock = setInterval(() => {
+          const seconds = Math.floor((performance.now() - started) / 1000);
+          timer.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+        }, 250);
+        function render() {
+          if (recording !== session || session.stopping) return;
+          drawFrame(canvas, context, mirror);
+          session.frame = requestAnimationFrame(render);
+        }
+        render();
+        setStatus('Recording silent video. Tap Stop recording when finished.');
+        updateControls();
+      } catch (error) {
+        if (session) {
+          session.failed = true;
+          if (session.recorder.state !== 'inactive') session.recorder.stop();
+          cleanupRecording(session);
+          if (recording === session) recording = null;
+        }
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        setStatus('Could not start video recording in this browser. Photos are still available.');
+        console.error(error);
+        updateControls();
+      }
+    });
+
+    document.getElementById('close-preview').addEventListener('click', () => preview.close());
+    preview.addEventListener('close', clearPreview);
+
+    function cameraUnavailable(message) {
+      cameraReady = false;
+      stopRecording();
+      updateControls();
+      setStatus(message);
+    }
+
+    async function startCamera() {
+      const requestGeneration = ++generation;
+      leaving = false;
+      cameraReady = false;
+      setStatus('Starting camera…');
+      updateControls();
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStatus('Camera access is unavailable. Open this page over HTTPS or localhost in a camera-enabled browser.');
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+        if (leaving || requestGeneration !== generation) { stream.getTracks().forEach(track => track.stop()); return; }
+        cameraStream = stream;
+        stream.getVideoTracks().forEach(track => track.addEventListener('ended', () => cameraUnavailable('Camera disconnected. Reload to reconnect.')));
+        video.srcObject = stream;
+        await video.play();
+      } catch (error) {
+        if (leaving || requestGeneration !== generation) return;
+        cameraStream?.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+        const message = error.name === 'NotAllowedError' ? 'Camera permission denied. Allow camera access and reload.' :
+          error.name === 'NotFoundError' ? 'No camera found. Connect a camera and reload.' : 'Could not start the camera. Check that it is available and reload.';
+        cameraUnavailable(message);
+        console.error(error);
+      }
+    }
+
+    video.addEventListener('loadeddata', () => {
+      if (leaving) return;
+      cameraReady = !!(video.videoWidth && video.videoHeight && cameraStream?.active);
+      updateControls();
+      if (cameraReady) setStatus(canRecord ? 'Ready. Capture a photo or record a silent video.' : 'Ready for photos. Video recording is unavailable in this browser.');
+    });
+    document.addEventListener('visibilitychange', () => {
+      // Canvas updates pause in background tabs; finish the clip before that happens.
+      if (document.hidden) stopRecording();
+    });
+    window.addEventListener('pagehide', () => {
+      leaving = true;
+      generation++;
+      if (recording) { recording.discarded = true; stopRecording(); cleanupRecording(recording); }
+      cameraStream?.getTracks().forEach(track => track.stop());
+      cameraStream = null;
+      cameraReady = false;
+      if (preview.open) preview.close();
+      clearPreview();
+    });
+    window.addEventListener('pageshow', event => { if (event.persisted) startCamera(); });
+    startCamera();
+  </script>
 </body>
 </html>
